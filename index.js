@@ -209,7 +209,7 @@ app.post('/showReview', async (req, res) => {
     console.log(req.body);
     try {
         // Query to get reviews and corresponding user IDs for the given movie ID
-        const [reviews] = await db.promise().query(
+        const [reviews] = await pool.promise().query(
             'SELECT r.review_text, r.created_at, r.user_id FROM reviews r WHERE r.movie_id = ? ORDER BY r.created_at DESC',[movieid]
         );
   
