@@ -203,6 +203,41 @@ app.post('/watchlistShow', async (req, res) => {
         res.status(500).json({ message: "Failed to fetch watchlist." });
     }
 });
+//shoe review
+app.post('/showReview', async (req, res) => {
+    const { movieid } = req.body;  // Get movie ID from the request body
+    console.log(req.body);
+    try {
+        // Query to get reviews and corresponding user IDs for the given movie ID
+        const [reviews] = await db.promise().query(
+            'SELECT r.review_text, r.created_at, r.user_id FROM reviews r WHERE r.movie_id = ? ORDER BY r.created_at DESC',[movieid]
+        );
+  
+        if (reviews.length === 0) {
+            return res.status(200).json([]);  // No reviews found for the movie
+        }
+  
+        // Fetch the corresponding usernames for the user IDs
+        const reviewPromises = reviews.map(async (review) => {
+            const [user] = await db.promise().query('SELECT username FROM users WHERE id = ?', [review.user_id]);
+  
+            return {
+                username: user[0].username,
+                comment: review.review_text,
+                timestamp: review.created_at
+            };
+        });
+  
+        // Wait for all usernames to be fetched
+        const fullReviews = await Promise.all(reviewPromises);
+        console.log(fullReviews);
+        // Send the reviews with usernames and timestamps to the frontend
+        res.status(200).json(fullReviews);
+    } catch (error) {
+        console.error('Error fetching reviews:', error);
+        res.status(500).json({ error: 'Failed to fetch reviews' });
+    }
+});
 
 // 8. Watchlist - Delete Movie
 app.post('/deleteWatchList', async (req, res) => {
