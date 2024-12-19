@@ -195,7 +195,7 @@ app.post('/watchlist', (req, res) => {
   app.get('/home', async (req, res) => {
     try {
         // Fetching movies along with reviews and ratings
-        const movieQuery = `SELECT 
+       const movieQuery = `SELECT 
     movies.id AS movie_id,
     movies.title,
     movies.release_date,
