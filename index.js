@@ -1,113 +1,89 @@
 require('dotenv').config();
 const express = require('express');
 const axios = require('axios');
-const cors = require('cors');  // Importing CORS
+const cors = require('cors');
 const mysql = require('mysql2');
 const bcrypt = require("bcryptjs");
-const app = express();
-var userId;
 
-app.use(cors());  // Enabling CORS for all routes
+const app = express();
+app.use(cors());
 app.use(express.json());
 
-//connecting database
-const db = mysql.createConnection({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,  // Your MySQL username
-    password: process.env.DB_PASSWORD,  // Your MySQL password
-    database: process.env.DB_NAME  // Your MySQL database
-});
-
-
-console.log( process.env.DB_HOST, process.env.DB_USER, process.env.DB_PASSWORD, process.env.DB_NAME);
-
-db.connect(err => {
-    if (err) throw err;
-    console.log("Connected to MySQL database");
-});
-
-
-const apiKey =  'e14e264ebfa010740b80b1526d711b26';
+const apiKey = 'e14e264ebfa010740b80b1526d711b26';
 const placeholderImage = 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/No-Image-Placeholder.svg/495px-No-Image-Placeholder.svg.png?20200912122019';
 
-// Signup Route
-app.post("/signup", (req, res) => {
+// Create MySQL connection pool
+const pool = mysql.createPool({
+    host: process.env.DB_HOST,
+    user: process.env.DB_USER,
+    password: process.env.DB_PASSWORD,
+    database: process.env.DB_NAME,
+    waitForConnections: true,
+    connectionLimit: 10,
+    queueLimit: 0
+}).promise();
+
+// Test database connection
+(async () => {
+    try {
+        const connection = await pool.getConnection();
+        console.log("Connected to MySQL database");
+        connection.release();
+    } catch (err) {
+        console.error("Error connecting to MySQL database:", err);
+    }
+})();
+
+// === ROUTES ===
+
+// 1. Signup Route
+app.post("/signup", async (req, res) => {
     const { name, email, password } = req.body;
-    console.log(name, email, password);
 
-    // Hash the password
-    const hashedPassword = bcrypt.hashSync(password, 10); 
-    console.log(hashedPassword);
+    try {
+        const hashedPassword = bcrypt.hashSync(password, 10);
 
-    // Insert user into the database
-    const query = "INSERT INTO users (username, email, password) VALUES (?, ?, ?)";
-    db.query(query, [name, email, hashedPassword], (err, result) => {
-        if (err) {
-            console.error("Error inserting user:", err);
-            return res.status(500).json({ error: err.message });
-        }
+        const [result] = await pool.query(
+            "INSERT INTO users (username, email, password) VALUES (?, ?, ?)",
+            [name, email, hashedPassword]
+        );
 
-        // Check if user was inserted correctly
-        const query1 = "SELECT id FROM users WHERE email = ?";
-        db.query(query1, [email], (err, results) => {
-            if (err) {
-                console.error("Error retrieving user:", err);
-                return res.status(500).json({ error: err.message });
-            }
-
-            if (results.length > 0) {
-                const userid = results[0];
-                return res.status(200).json({ message: "User registered successfully!", userid });
-            } else {
-                return res.status(500).json({ error: "User not found after insertion." });
-            }
-        });
-    });
+        const userId = result.insertId;
+        res.status(200).json({ message: "User registered successfully!", userId });
+    } catch (err) {
+        console.error("Error during signup:", err);
+        res.status(500).json({ error: "Signup failed." });
+    }
 });
 
-
-app.post("/login", (req, res) => {
+// 2. Login Route
+app.post("/login", async (req, res) => {
     const { email, password } = req.body;
-    console.log(email, password);
-    const query = "SELECT * FROM users WHERE email = ?";
-    db.query(query, [email], (err, results) => {
-        if (err) {
-            console.log(err);
-            return res.status(500).json({ error: err.message });
-        }
 
-        if (results.length > 0) {
-            const user = results[0];
-            bcrypt.compare(password, user.password, (err, isMatch) => {
-                if (err) {
-                    console.log(err);
-                    return res.status(500).json({ error: err.message });
-                }
+    try {
+        const [results] = await pool.query("SELECT * FROM users WHERE email = ?", [email]);
 
-                if (isMatch) {
-                    console.log("Login successful");
-                    const userid = results[0].id;
-                    console.log("This is user ID:", userid);
-
-                    // Return the userId to the frontend
-                    return res.status(200).json({ message: "Login successful!", userid: userid });
-                } else {
-                    console.log("Login failed");
-                    return res.status(400).json({ message: "Invalid credentials" });
-                }
-            });
-        } else {
-            console.log("User not found");
+        if (results.length === 0) {
             return res.status(400).json({ message: "User not found" });
         }
-    });
+
+        const user = results[0];
+        const isMatch = await bcrypt.compare(password, user.password);
+
+        if (isMatch) {
+            res.status(200).json({ message: "Login successful!", userId: user.id });
+        } else {
+            res.status(400).json({ message: "Invalid credentials" });
+        }
+    } catch (err) {
+        console.error("Error during login:", err);
+        res.status(500).json({ error: "Login failed." });
+    }
 });
 
-
-
-// Endpoint to search for a movie
+// 3. Search Movie
 app.post('/search-movie', async (req, res) => {
-    const movieName = req.body.movieName;
+    const { movieName } = req.body;
 
     try {
         const response = await axios.get('https://api.themoviedb.org/3/search/movie', {
@@ -124,212 +100,130 @@ app.post('/search-movie', async (req, res) => {
             id: movie.id,
         }));
 
-        // Optionally fetch the cast for each movie
-        for (let movie of movies) {
-            const castResponse = await axios.get(`https://api.themoviedb.org/3/movie/${movie.id}/credits`, {
-                params: { api_key: apiKey }
-            });
-            movie.actors = castResponse.data.cast.slice(0, 5).map(actor => actor.name);
-        }
-
-        res.json(movies);  // Return all movie details
-    } catch (error) {
-        console.error('Error fetching movie data:', error.message);
-        res.status(500).json({ error: 'Failed to fetch movie data' });
+        res.json(movies);
+    } catch (err) {
+        console.error("Error fetching movies:", err);
+        res.status(500).json({ error: "Failed to fetch movies." });
     }
 });
 
-// Endpoint to submit a review
+// 4. Rate and Review Movie
 app.post('/rate-movie', async (req, res) => {
-    const { movieid, title, poster, releaseyear, actors, review, rating ,userid} = req.body;
-    console.log(userid);
+    const { title, poster, releaseyear, actors, review, rating, userid } = req.body;
+
     try {
-        // Step 1: Insert the movie data into the 'movies' table (if not already present)
-        let movieQuery = `SELECT * FROM movies WHERE title = ? AND release_date = ?`;
-        const [movieResult] = await db.promise().query(movieQuery, [title, releaseyear]);
+        const [movieResult] = await pool.query(
+            "SELECT * FROM movies WHERE title = ? AND release_date = ?",
+            [title, releaseyear]
+        );
 
         let movieId;
         if (movieResult.length === 0) {
-            const insertMovieQuery = `INSERT INTO movies (title, release_date,actors, poster_url) VALUES (?, ?, ?, ?)`;
-            const [insertedMovie] = await db.promise().query(insertMovieQuery, [title, releaseyear,actors, poster]);
-            movieId = insertedMovie.insertId;
+            const [insertMovie] = await pool.query(
+                "INSERT INTO movies (title, release_date, actors, poster_url) VALUES (?, ?, ?, ?)",
+                [title, releaseyear, actors, poster]
+            );
+            movieId = insertMovie.insertId;
         } else {
-            movieId = movieResult[0].id; // Movie already exists
+            movieId = movieResult[0].id;
         }
 
-        // Step 2: Insert the review data into the 'reviews' table
-        const insertReviewQuery = `INSERT INTO reviews (user_id, movie_id, review_text) VALUES (?, ?, ?)`;
-        await db.promise().query(insertReviewQuery, [userid, movieId, review]);
+        await pool.query("INSERT INTO reviews (user_id, movie_id, review_text) VALUES (?, ?, ?)", [userid, movieId, review]);
+        await pool.query("INSERT INTO rating (user_id, movie_id, rating) VALUES (?, ?, ?)", [userid, movieId, rating]);
 
-        // Step 3: Insert the rating data into the 'rating' table
-        const insertRatingQuery = `INSERT INTO rating (user_id, movie_id, rating) VALUES (?, ?, ?)`;
-        await db.promise().query(insertRatingQuery, [userid, movieId, rating]);
-
-        // Send a response back to the client
-        res.json({ message: 'Movie review and rating saved successfully!', movieId });
-    } catch (error) {
-        console.error('Error saving movie review and rating:', error);
-        res.status(500).json({ message: 'Failed to save movie review and rating' });
+        res.json({ message: "Movie review and rating saved successfully!", movieId });
+    } catch (err) {
+        console.error("Error saving review or rating:", err);
+        res.status(500).json({ message: "Failed to save review or rating." });
     }
 });
 
-
-app.post('/watchlist', (req, res) => {
-    const { movieid, title, poster, releaseYear,userid } = req.body;
-  
-    if (!title || !poster || !releaseYear || !userid) {
-      return res.status(400).json({ message: "All fields are required" });
-    }
-  
-    // SQL query to insert watchlist data into the database
-    const query = `INSERT INTO watchlists ( title, poster, releaseYear,user_id) VALUES ( ?, ?, ?, ?)`;
-  
-    db.query(query, [ title, poster, releaseYear, userid], (error, results) => {
-      if (error) {
-        console.error("Error inserting watchlist data: ", error);
-        return res.status(500).json({ message: "Failed to add to watchlist" });
-      }
-  
-      res.status(200).json({ message: "Movie added to watchlist", watchlistId: results.insertId });
-    });
-  });
-  
-
-  app.get('/home', async (req, res) => {
+// 5. Home Route - Fetch Movies with Reviews and Ratings
+app.get('/home', async (req, res) => {
     try {
-        // Fetching movies along with reviews and ratings
-        const movieQuery = `
+        const [movies] = await pool.query(`
             SELECT 
                 movies.id AS movie_id,
                 movies.title,
                 movies.release_date,
                 movies.actors,
                 movies.poster_url AS poster,
-                GROUP_CONCAT(reviews.review_text) AS reviews,  -- Concatenating reviews into one field
-                AVG(rating.rating) AS average_rating  -- Calculating the average rating
+                GROUP_CONCAT(reviews.review_text) AS reviews,
+                AVG(rating.rating) AS average_rating
             FROM movies
             LEFT JOIN reviews ON movies.id = reviews.movie_id
             LEFT JOIN rating ON movies.id = rating.movie_id
             GROUP BY movies.id
-        `;
+        `);
 
-        const [movies] = await db.promise().query(movieQuery);
-
-        // If you store actors as a comma-separated string, you can split it to make it an array
-        for (let movie of movies) {
-            if (movie.actors) {
-                movie.actors = movie.actors.split(',');  // Convert comma-separated actors string to an array
-            } else {
-                movie.actors = [];  // If no actors exist
-            }
-
-            // Handle reviews: Split the concatenated reviews into an array
-            if (movie.reviews) {
-                movie.reviews = movie.reviews.split(',');  // Split reviews into an array
-            } else {
-                movie.reviews = [];  // If no reviews exist
-            }
-
-            // Handling rating: If average rating is null, set it to 0
-            movie.average_rating = movie.average_rating ? movie.average_rating : 0;
-        }
-       console.log(movies)
-        // Responding with the movies data including reviews and ratings
-        res.json(movies);
-    } catch (error) {
-        console.error('Error fetching movies, reviews, and ratings:', error);
-        res.status(500).json({ message: 'Failed to fetch movies, reviews, and ratings' });
-    }
-});
-
-app.post('/showReview', async (req, res) => {
-    const { movieid } = req.body;  // Get movie ID from the request body
-    console.log(req.body);
-    try {
-        // Query to get reviews and corresponding user IDs for the given movie ID
-        const [reviews] = await db.promise().query(
-            'SELECT r.review_text, r.created_at, r.user_id FROM reviews r WHERE r.movie_id = ?',
-            [movieid]
-        );
-  
-        if (reviews.length === 0) {
-            return res.status(200).json([]);  // No reviews found for the movie
-        }
-  
-        // Fetch the corresponding usernames for the user IDs
-        const reviewPromises = reviews.map(async (review) => {
-            const [user] = await db.promise().query('SELECT username FROM users WHERE id = ?', [review.user_id]);
-  
-            return {
-                username: user[0].username,
-                comment: review.review_text,
-                timestamp: review.created_at
-            };
-        });
-  
-        // Wait for all usernames to be fetched
-        const fullReviews = await Promise.all(reviewPromises);
-        console.log(fullReviews);
-        // Send the reviews with usernames and timestamps to the frontend
-        res.status(200).json(fullReviews);
-    } catch (error) {
-        console.error('Error fetching reviews:', error);
-        res.status(500).json({ error: 'Failed to fetch reviews' });
-    }
-});
-
-
-
-app.post('/watchlistShow', (req, res) => {
-
-    const userId = req.body;
-    const userid = userId.userid
-    console.log("this is watchlists user id ",userId.userid);
-    const query = `
-    SELECT id, title, poster, releaseYear
-    FROM watchlists  WHERE watchlists.user_id = ?`; // Correct syntax for parameterized query
-
-    // Replace with actual user ID (e.g., from session or JWT token)
-
-    db.query(query, [userid], (err, results) => {
-        if (err) {
-            console.error('Error fetching watchlist:', err);
-            return res.status(500).json({ message: 'Error fetching watchlist' });
-        }
-        console.log("this id  gotten data",results);
-        // Transform actors string to an array, assuming it's stored as comma-separated values in the database
-        const transformedResults = results.map(movie => ({
-            ...movie
-            // Adjust this based on how actors are stored
+        const formattedMovies = movies.map(movie => ({
+            ...movie,
+            actors: movie.actors ? movie.actors.split(',') : [],
+            reviews: movie.reviews ? movie.reviews.split(',') : [],
+            average_rating: movie.average_rating || 0
         }));
 
-        res.json(transformedResults);
-    });
+        res.json(formattedMovies);
+    } catch (err) {
+        console.error("Error fetching home data:", err);
+        res.status(500).json({ message: "Failed to fetch home data." });
+    }
 });
 
-// Route to delete from watchlist
-app.post('/deleteWatchList', (req, res) => {
-    const { movieid } = req.body;
-    console.log(movieid);
-    const query = 'DELETE FROM watchlists WHERE id = ?';
+// 6. Watchlist - Add Movie
+app.post('/watchlist', async (req, res) => {
+    const { title, poster, releaseYear, userid } = req.body;
 
-    db.query(query, [movieid], (err, result) => {
-        if (err) {
-            console.error('Error deleting from watchlist:', err);
-            return res.status(500).json({ message: 'Error deleting movie' });
-        }
+    try {
+        await pool.query(
+            "INSERT INTO watchlists (title, poster, releaseYear, user_id) VALUES (?, ?, ?, ?)",
+            [title, poster, releaseYear, userid]
+        );
+
+        res.status(200).json({ message: "Movie added to watchlist successfully!" });
+    } catch (err) {
+        console.error("Error adding to watchlist:", err);
+        res.status(500).json({ message: "Failed to add to watchlist." });
+    }
+});
+
+// 7. Watchlist - Show Movies
+app.post('/watchlistShow', async (req, res) => {
+    const { userid } = req.body;
+
+    try {
+        const [results] = await pool.query(
+            "SELECT id, title, poster, releaseYear FROM watchlists WHERE user_id = ?",
+            [userid]
+        );
+
+        res.json(results);
+    } catch (err) {
+        console.error("Error fetching watchlist:", err);
+        res.status(500).json({ message: "Failed to fetch watchlist." });
+    }
+});
+
+// 8. Watchlist - Delete Movie
+app.post('/deleteWatchList', async (req, res) => {
+    const { movieid } = req.body;
+
+    try {
+        const [result] = await pool.query("DELETE FROM watchlists WHERE id = ?", [movieid]);
 
         if (result.affectedRows > 0) {
-            res.json({ message: 'Movie removed from watchlist successfully' });
+            res.json({ message: "Movie removed from watchlist successfully" });
         } else {
-            res.status(404).json({ message: 'Movie not found in watchlist' });
+            res.status(404).json({ message: "Movie not found in watchlist" });
         }
-    });
+    } catch (err) {
+        console.error("Error deleting from watchlist:", err);
+        res.status(500).json({ message: "Failed to delete from watchlist." });
+    }
 });
 
-
+// Start Server
 const PORT = process.env.PORT || 5000;
-
 app.listen(PORT, () => {
-    console.log(`App running on port: ${PORT}`);
+    console.log(`Server is running on port ${PORT}`);
 });
