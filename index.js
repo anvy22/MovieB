@@ -219,7 +219,7 @@ app.post('/showReview', async (req, res) => {
   
         // Fetch the corresponding usernames for the user IDs
         const reviewPromises = reviews.map(async (review) => {
-            const [user] = await db.promise().query('SELECT username FROM users WHERE id = ?', [review.user_id]);
+            const [user] = await pool.promise().query('SELECT username FROM users WHERE id = ?', [review.user_id]);
   
             return {
                 username: user[0].username,
