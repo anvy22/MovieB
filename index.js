@@ -2,7 +2,7 @@ const express = require('express');
 require('dotenv').config();
 const axios = require('axios');
 const cors = require('cors');  // Importing CORS
-const mysql = require('mysql2');
+const mysql = require('mysql2/promise');
 const bcrypt = require("bcryptjs");
 const app = express();
 var userId;
@@ -11,17 +11,26 @@ app.use(cors());  // Enabling CORS for all routes
 app.use(express.json());
 
 //connecting database
-const db = mysql.createConnection({
+const db = mysql.createPool({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,  // Your MySQL username
     password: process.env.DB_PASSWORD,  // Your MySQL password
-    database: process.env.DB_NAME  // Your MySQL database
+    database: process.env.DB_NAME,  // Your MySQL database
+    waitForConnections: true,  // Wait if no connections are available
+    connectionLimit: 10,       // Maximum number of connections in the pool
+    queueLimit: 0              // No limit on the request queue
 });
 
-db.connect(err => {
-    if (err) throw err;
-    console.log("Connected to MySQL database");
-});
+// Test the connection pool
+(async () => {
+    try {
+        const connection = await db.getConnection();
+        console.log("Connected to MySQL database using the connection pool");
+        connection.release(); // Release the connection back to the pool
+    } catch (err) {
+        console.error("Error connecting to MySQL database:", err);
+    }
+})();
 
 
 const apiKey =  'e14e264ebfa010740b80b1526d711b26';
