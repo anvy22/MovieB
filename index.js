@@ -2,7 +2,7 @@ const express = require('express');
 require('dotenv').config();
 const axios = require('axios');
 const cors = require('cors');  // Importing CORS
-const mysql = require('mysql2/promise');
+const mysql = require('mysql2');
 const bcrypt = require("bcryptjs");
 const app = express();
 var userId;
