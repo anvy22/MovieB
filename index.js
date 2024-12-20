@@ -11,27 +11,17 @@ app.use(cors());  // Enabling CORS for all routes
 app.use(express.json());
 
 //connecting database
-const db = mysql.createPool({
+const db = mysql.createConnection({
     host: process.env.DB_HOST,
     user: process.env.DB_USER,  // Your MySQL username
     password: process.env.DB_PASSWORD,  // Your MySQL password
-    database: process.env.DB_NAME,  // Your MySQL database
-    waitForConnections: true,  // Wait if no connections are available
-    connectionLimit: 10,       // Maximum number of connections in the pool
-    queueLimit: 0              // No limit on the request queue
+    database: process.env.DB_NAME  // Your MySQL database
 });
 
-// Test the connection pool
-(async () => {
-    try {
-        const connection = await db.getConnection();
-        console.log("Connected to MySQL database using the connection pool");
-        connection.release(); // Release the connection back to the pool
-    } catch (err) {
-        console.error("Error connecting to MySQL database:", err);
-    }
-})();
-
+db.connect(err => {
+    if (err) throw err;
+    console.log("Connected to MySQL database");
+});
 
 const apiKey =  'e14e264ebfa010740b80b1526d711b26';
 const placeholderImage = 'https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/No-Image-Placeholder.svg/495px-No-Image-Placeholder.svg.png?20200912122019';
@@ -152,13 +142,12 @@ app.post('/rate-movie', async (req, res) => {
     try {
         // Step 1: Insert the movie data into the 'movies' table (if not already present)
         let movieQuery = `SELECT * FROM movies WHERE title = ? AND release_date = ?`;
-        const [movieResult] = await db.query(movieQuery, [title, releaseyear]);
-
+        const [movieResult] = await db.promise().query(movieQuery, [title, releaseyear]);
 
         let movieId;
         if (movieResult.length === 0) {
             const insertMovieQuery = `INSERT INTO movies (title, release_date,actors, poster_url) VALUES (?, ?, ?, ?)`;
-            const [insertedMovie] = await db.query(insertMovieQuery, [title, releaseyear, actors, poster]);
+            const [insertedMovie] = await db.promise().query(insertMovieQuery, [title, releaseyear,actors, poster]);
             movieId = insertedMovie.insertId;
         } else {
             movieId = movieResult[0].id; // Movie already exists
@@ -166,11 +155,11 @@ app.post('/rate-movie', async (req, res) => {
 
         // Step 2: Insert the review data into the 'reviews' table
         const insertReviewQuery = `INSERT INTO reviews (user_id, movie_id, review_text) VALUES (?, ?, ?)`;
-        await db.query(insertReviewQuery, [userid, movieId, review]);
+        await db.promise().query(insertReviewQuery, [userid, movieId, review]);
 
         // Step 3: Insert the rating data into the 'rating' table
         const insertRatingQuery = `INSERT INTO rating (user_id, movie_id, rating) VALUES (?, ?, ?)`;
-        await db.query(insertRatingQuery, [userid, movieId, rating]);
+        await db.promise().query(insertRatingQuery, [userid, movieId, rating]);
 
         // Send a response back to the client
         res.json({ message: 'Movie review and rating saved successfully!', movieId });
@@ -219,7 +208,7 @@ GROUP BY movies.id
 ORDER BY movie_id DESC;  -- Order by movie_id in descending order
 `;
 
-        const [movies] = await db.query(movieQuery);
+        const [movies] = await db.promise().query(movieQuery);
 
         // Process the movies array
         for (let movie of movies) {
@@ -249,7 +238,7 @@ app.post('/showReview', async (req, res) => {
     console.log(req.body);
     try {
         // Query to get reviews and corresponding user IDs for the given movie ID
-        const [reviews] = await db.query(
+        const [reviews] = await db.promise().query(
             'SELECT r.review_text, r.created_at, r.user_id FROM reviews r WHERE r.movie_id = ? ORDER BY r.created_at DESC',[movieid]
         );
   
@@ -259,7 +248,7 @@ app.post('/showReview', async (req, res) => {
   
         // Fetch the corresponding usernames for the user IDs
         const reviewPromises = reviews.map(async (review) => {
-            const [user] = await db.query('SELECT username FROM users WHERE id = ?', [review.user_id]);
+            const [user] = await db.promise().query('SELECT username FROM users WHERE id = ?', [review.user_id]);
   
             return {
                 username: user[0].username,
